@@ -1,5 +1,7 @@
 # waitfor
 
+[![tests](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Small, shell-agnostic CLI to wait for an existing process (by PID or by `ps` substring match) to exit, then optionally run another command.
 
 This is meant for the cross-terminal use case where `wait` can’t help because the process isn’t a child of your current shell.
@@ -13,10 +15,23 @@ This is meant for the cross-terminal use case where `wait` can’t help because 
 
 ## Install
 
+### From git / tarball
+
 ```bash
 chmod +x "$HOME/software/waitfor/waitfor"
 ln -sf "$HOME/software/waitfor/waitfor" "$HOME/bin/waitfor"
 ```
+
+### [Homebrew](https://brew.sh) (this repo is a [tap](https://docs.brew.sh/Taps))
+
+[Homebrew](https://formulae.brew.sh) requires a local install of [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg` on `PATH`); the formula depends on the `ripgrep` keg. `waitfor` and `tools/` (for shell completions) are installed under the formula prefix with `waitfor` in `$(brew --prefix)/bin`.
+
+```bash
+brew tap mlevin2/waitfor https://github.com/mlevin2/waitfor
+brew install --head mlevin2/waitfor/waitfor
+```
+
+The formula is **head-only** (it tracks the `main` branch). A stable `url`+`sha256` can be added later for a tagged release. Submitting to **homebrew-core** is a separate process.
 
 ## Shell completions
 
@@ -96,6 +111,8 @@ waitfor node postgres --any --settle 3 -- echo "something finished"
 - Some platforms can leave a short-lived zombie (`Z`) entry after a process exits. `waitfor` treats zombies as "done".
 
 ## Tests
+
+On every push to `main`, [GitHub Actions](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml) runs the same headless suite on **Ubuntu 22.04/24.04** and **macOS 14/15** (installs `ripgrep` first). GUI-only demos (e.g. `tests/manual-mac-notify-demo.sh`) are not part of CI.
 
 ```bash
 bash tests/run.sh
