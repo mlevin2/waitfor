@@ -437,16 +437,24 @@ main() {
   local pid
   for pid in "${pids[@]}"; do
     local seen=0
-    local u
-    for u in "${uniq[@]}"; do
-      if [[ "$u" == "$pid" ]]; then
-        seen=1
-        break
-      fi
-    done
-    (( seen == 0 )) && uniq+=("$pid")
+    if ((${#uniq[@]} > 0)); then
+      local u
+      for u in "${uniq[@]}"; do
+        if [[ "$u" == "$pid" ]]; then
+          seen=1
+          break
+        fi
+      done
+    fi
+    if (( seen == 0 )); then
+      uniq+=("$pid")
+    fi
   done
-  pids=("${uniq[@]}")
+  if ((${#uniq[@]} > 0)); then
+    pids=("${uniq[@]}")
+  else
+    pids=()
+  fi
 
   if [[ ${#pids[@]} -eq 0 ]]; then
     err "No PIDs selected/resolved."

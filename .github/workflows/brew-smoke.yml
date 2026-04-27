@@ -17,19 +17,23 @@ concurrency:
 permissions:
   contents: read
 
+# Checkout on the host (avoids actions/checkout in a service-style container, which
+# can hit EACCES on GHA), then `docker run` the official brew image like `make brew-smoke`.
 jobs:
   homebrew-smoke:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/homebrew/brew:latest
-    env:
-      HOMEBREW_NO_AUTO_UPDATE: "1"
-      HOMEBREW_NO_ANALYTICS: "1"
-      HOMEBREW_NO_ENV_HINTS: "1"
-      # Formula at this ref (aligns with docker compose bind mount of the repo)
-      WAITFOR_TAP_DIR: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Tap, install, test
-        run: bash scripts/homebrew-smoke-inner.sh
+      - name: Tap, install, test (Docker)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            -w /src \
+            -e HOMEBREW_NO_AUTO_UPDATE=1 \
+            -e HOMEBREW_NO_ANALYTICS=1 \
+            -e HOMEBREW_NO_ENV_HINTS=1 \
+            -e WAITFOR_TAP_DIR=/src \
+            ghcr.io/homebrew/brew:latest \
+            /bin/bash scripts/homebrew-smoke-inner.sh
