@@ -1,0 +1,35 @@
+# `brew install mlevin2/waitfor/waitfor` in the official Homebrew Linux image.
+# On push/PR, weekly cron, and workflow_dispatch (same as local `make brew-smoke`).
+name: Brew smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 12 * * 1"
+
+concurrency:
+  group: brew-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew-smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/homebrew/brew:latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+      # Formula at this ref (aligns with docker compose bind mount of the repo)
+      WAITFOR_TAP_DIR: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tap, install, test
+        run: bash scripts/homebrew-smoke-inner.sh

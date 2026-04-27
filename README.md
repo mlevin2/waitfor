@@ -1,6 +1,6 @@
 # waitfor
 
-[![tests](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![tests](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml?query=branch%3Amain) [![Brew smoke](https://github.com/mlevin2/waitfor/actions/workflows/brew-smoke.yml/badge.svg?branch=main)](https://github.com/mlevin2/waitfor/actions/workflows/brew-smoke.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Small, shell-agnostic CLI to wait for an existing process (by PID or by `ps` substring match) to exit, then optionally run another command.
 
@@ -32,6 +32,13 @@ brew install --head mlevin2/waitfor/waitfor
 ```
 
 The formula is **head-only** (it tracks the `main` branch). A stable `url`+`sha256` can be added later for a tagged release. Submitting to **homebrew-core** is a separate process.
+
+**Smoke test (optional):** [Brew smoke](https://github.com/mlevin2/waitfor/actions/workflows/brew-smoke.yml) runs the same `scripts/homebrew-smoke-inner.sh` as **pushes to `main`**, **pull requests**, a **weekly** schedule, and **Actions → Brew smoke** (manual). That job uses the [official Linux Homebrew image](https://github.com/orgs/Homebrew/packages/container/package/brew); locally, pick one:
+
+- **Parity with GHA (Docker, no host install):** `make brew-smoke` (or `bash scripts/test-homebrew-docker.sh` — `docker compose -f docker-compose.brew.yml …`).
+- **Native Homebrew** on this machine (macOS or [Linux with brew](https://docs.brew.sh/Homebrew-on-Linux)) — fast, no container: `make brew-smoke-host` (uses `WAITFOR_TAP_DIR` to tap this tree).
+
+`docker/Dockerfile.homebrew-smoke` bakes the inner script only and taps the repo on GitHub (`make brew-smoke-image` then `docker run`) — see the Dockerfile.
 
 ## Shell completions
 
@@ -110,10 +117,31 @@ waitfor node postgres --any --settle 3 -- echo "something finished"
 - If a query matches multiple processes, `waitfor` uses `fzf` to prompt you to pick one or more processes. In non-interactive contexts (stdin/stdout not a TTY), `waitfor` refuses to prompt and exits non-zero.
 - Some platforms can leave a short-lived zombie (`Z`) entry after a process exits. `waitfor` treats zombies as "done".
 
+## Development
+
+**Lint (ShellCheck)** and **headless tests** are required before commits if you enable the hook. Install [ShellCheck](https://github.com/koalaman/shellcheck#installing) (e.g. `brew install shellcheck` or `apt install shellcheck`).
+
+```bash
+# one-time: use the repo’s Git hooks
+git config core.hooksPath .githooks
+
+# same as pre-commit: lint + tests/test-*.sh (not GUI demos)
+make check
+# or:  bash scripts/lint.sh  &&  bash tests/run.sh
+```
+
+The [pre-commit](.githooks/pre-commit) hook runs `scripts/lint.sh` (all of `waitfor`, `scripts/**/*.sh`, `tests/**/*.sh`) then `tests/run.sh`. Skip the hook for a one-off with `git commit --no-verify` (use sparingly). See [CONTRIBUTING.md](CONTRIBUTING.md) for a short contributor checklist and how this maps to CI.
+
 ## Tests
 
-On every push to `main`, [GitHub Actions](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml) runs the same headless suite on **Ubuntu 22.04/24.04** and **macOS 14/15** (installs `ripgrep` first). GUI-only demos (e.g. `tests/manual-mac-notify-demo.sh`) are not part of CI.
+On every push to `main` and for pull requests, [GitHub Actions](https://github.com/mlevin2/waitfor/actions/workflows/tests.yml) runs **ShellCheck** then the same headless suite on **Ubuntu 22.04/24.04** and **macOS 14/15** (installs `ripgrep` and `shellcheck` first). GUI-only demos (e.g. `tests/manual-mac-notify-demo.sh`) are not part of `tests/run.sh` or the hook; they are still included in `scripts/lint.sh` when present under `tests/`.
+
+[Homebrew](https://github.com/mlevin2/waitfor/actions/workflows/brew-smoke.yml) runs the tap/install test on **push, PR, weekly, and manual**; locally use **`make brew-smoke`** (same as GHA) or **`make brew-smoke-host`** (host `brew`).
 
 ```bash
 bash tests/run.sh
 ```
+
+## TODO: Homebrew workflow
+
+- [ ] **More robust Homebrew story:** e.g. stable `url` + `sha256` (tagged release), a dedicated [tap](https://docs.brew.sh/Taps) layout like a separate `homebrew-tap` repo, bottles, or aligning with homebrew-core expectations—so releases and upgrade paths are clearer than head-only. The smoke script and workflow are the baseline; this item tracks the next level of release hygiene.

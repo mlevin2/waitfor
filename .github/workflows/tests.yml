@@ -1,4 +1,4 @@
-# Headless `tests/run.sh` only (no GUI, no manual-*.sh).
+# Matrix: headless `tests/run.sh` (no GUI, no manual-*.sh). Homebrew: see brew-smoke.yml.
 name: tests
 
 on:
@@ -27,15 +27,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ripgrep (Linux)
+      - name: Install ripgrep and shellcheck (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ripgrep
+          sudo apt-get install -y ripgrep shellcheck
 
-      - name: Install ripgrep (macOS)
+      - name: Install ripgrep and shellcheck (macOS)
         if: runner.os == 'macOS'
-        run: brew install ripgrep
+        run: brew install ripgrep shellcheck
+
+      - name: Lint (ShellCheck)
+        run: bash scripts/lint.sh
 
       - name: Run test suite
         run: bash tests/run.sh

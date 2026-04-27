@@ -1,0 +1,17 @@
+# Baked image (no bind mount) — tests tap from GitHub main, not a local tree.
+# Prefer docker-compose.brew.yml + scripts/test-homebrew-docker.sh.
+#
+#   docker build -f docker/Dockerfile.homebrew-smoke -t waitfor-brew-smoke .
+#   docker run --rm waitfor-brew-smoke
+FROM ghcr.io/homebrew/brew:latest
+
+ENV HOMEBREW_NO_AUTO_UPDATE=1 \
+    HOMEBREW_NO_ANALYTICS=1 \
+    HOMEBREW_NO_ENV_HINTS=1
+
+WORKDIR /src
+COPY scripts/homebrew-smoke-inner.sh scripts/homebrew-smoke-inner.sh
+RUN chmod +x scripts/homebrew-smoke-inner.sh
+
+# No WAITFOR_TAP_DIR — inner script taps mlevin2/waitfor from https://github.com/...
+CMD ["/bin/bash", "scripts/homebrew-smoke-inner.sh"]

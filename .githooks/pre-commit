@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Enable with:  git config core.hooksPath .githooks
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$ROOT"
+bash scripts/lint.sh
+echo "pre-commit: tests/run.sh (headless)…"
+bash tests/run.sh
+echo "pre-commit: ok"
