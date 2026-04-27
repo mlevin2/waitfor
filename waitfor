@@ -16,8 +16,8 @@ Targets:
 
 Options:
   --all                 Wait for all targets (default).
-  --any                 Proceed when any one target exits.
-  --timeout DURATION    Max time to wait before failing (default: no timeout).
+  --any, --first         Proceed when any one target exits.
+  -t, --timeout DURATION  Max time to wait before failing (default: no timeout).
                         Format: N, Ns, Nm, Nh, Nd (integers)
   --settle SECONDS      Sleep this long after the wait completes (default: 0).
   --interval SECONDS    Poll interval in seconds (default: 2).
@@ -180,7 +180,37 @@ wait_for_pids_any() {
   done
 }
 
+_waitfor_try_completion() {
+  # Resolve symlinks (e.g. ~/bin/waitfor -> .../software/waitfor/waitfor) so tools/ is found.
+  local _self _dir
+  _self="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
+  _dir="$(cd "$(dirname "$_self")" && pwd -P)"
+  if [[ ! -f "$_dir/tools/completion_bootstrap.py" ]]; then
+    err "waitfor: completion support missing: $_dir/tools/"
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    err "waitfor: python3 is required for shell completions (see README)."
+    exit 1
+  fi
+  python3 "$_dir/tools/completion_bootstrap.py" "$_self" "$@"
+  local rc=$?
+  if [[ "$rc" -eq 125 ]]; then
+    err "waitfor: completion handler did not recognize the request."
+    exit 1
+  fi
+  exit "$rc"
+}
+
 main() {
+  if [[ $# -ge 1 ]]; then
+    case "$1" in
+      --_complete-options | --print-completion | install-completion)
+        _waitfor_try_completion "$@"
+        ;;
+    esac
+  fi
+
   need_cmd ps
   need_cmd rg
 

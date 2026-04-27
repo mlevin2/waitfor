@@ -17,6 +17,27 @@ chmod +x "$HOME/software/waitfor/waitfor"
 ln -sf "$HOME/software/waitfor/waitfor" "$HOME/bin/waitfor"
 ```
 
+## Shell completions
+
+`waitfor` supports **fish** and **zsh** completions (options are derived from `--help` via a small Python helper; same pattern as `pdf-extract-pages`).
+
+- `waitfor --print-completion fish|zsh` — print a snippet to stdout
+- `waitfor install-completion fish|zsh` — write the completion file under `~/.config/fish/completions` or `~/.zsh/completions`
+
+Requires `python3` for these subcommands. Implementation: `tools/cli_completion.py` in this repo.
+
+**zsh:** add `fpath` before `compinit` if needed, e.g. `fpath=("$HOME/.zsh/completions" $fpath)`.
+
+## Finding a target PID (no TTY)
+
+`tty` only works in a real terminal; a shell spawned by a GUI (or `!` in an agent UI) may report `not a tty`, so you cannot use `tty` to map “this window” to a `ps` row.
+
+Ways to pick a `--pid` or query string for `waitfor` anyway:
+
+- **Known command line:** run `ps ax -o pid,etime,command= | rg -F 'opencode'` (or another distinctive substring) and use that string as a `waitfor` query, or the PID if unambiguous.
+- **Known working directory (macOS):** `lsof -a -p <pid> -d cwd` to confirm which `node`/`opencode` instance is using a given project folder, then `waitfor <that-pid>`.
+- **Distinguish multiple matches:** if the substring is ambiguous, install `fzf` so `waitfor` can open an interactive picker, or pass an explicit numeric PID from `ps`.
+
 ## Usage
 
 ```bash
