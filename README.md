@@ -79,6 +79,8 @@ export WAITFOR_NOTIFY_CMD="$HOME/bin/my-notify"
 
 When `--notify` is set and a wait **times out**, a single timeout notification (or the same warning) is used; the **post-wait command is not run** (same as before).
 
+Notification text includes a **snapshot of each target PID and its `ps` command line** (taken right before the wait) so the message still makes sense after the process has exited. The “command finished” notification includes the first token of the post-wait command in quotes, the exit code, and an abbreviated full command line.
+
 Examples:
 
 ```bash

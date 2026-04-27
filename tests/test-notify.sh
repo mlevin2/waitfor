@@ -15,11 +15,12 @@ export WAITFOR_NOTIFY_CMD="$LOGNOTIFY"
 sleep 0.4 &
 pid=$!
 
-# No command: one notification
+# No command: one notification (body includes pid and command name from ps)
 "$WAITFOR" "$pid" --interval 0.05 --settle 0 --notify
 lines=$(wc -l <"$NOTIFY_LOG" | tr -d ' ')
 [[ "$lines" -eq 1 ]]
-rg -q 'Finished waiting' "$NOTIFY_LOG"
+head -1 "$NOTIFY_LOG" | rg -q "Finished waiting: $pid .*\("
+head -1 "$NOTIFY_LOG" | rg -qi 'sleep'
 
 # With command: two notifications
 : >"$NOTIFY_LOG"
@@ -28,6 +29,6 @@ pid=$!
 "$WAITFOR" "$pid" --interval 0.05 --settle 0 --notify -- sh -c "echo x > '$tmp/x'"
 lines=$(wc -l <"$NOTIFY_LOG" | tr -d ' ')
 [[ "$lines" -eq 2 ]]
-rg -q 'Finished waiting' "$NOTIFY_LOG"
-rg -q 'Command finished' "$NOTIFY_LOG"
+head -1 "$NOTIFY_LOG" | rg -q "Finished waiting: $pid .*\("
+sed -n '2p' "$NOTIFY_LOG" | rg -Fq 'Command "sh" finished'
 [[ "$(cat "$tmp/x")" == "x" ]]

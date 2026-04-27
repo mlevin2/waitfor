@@ -43,6 +43,30 @@ _waitfor_abbrev() {
   ((${#s} > max)) && printf '%s' "${s:0:max}..." || printf '%s' "$s"
 }
 
+# One-line summary: each target as "PID (command)"; commands from ps at snapshot time
+# (we capture before the wait, because the process is gone when the wait ends).
+_waitfor_pids_pretty() {
+  local pid cl s t
+  s=""
+  t=""
+  for pid in "$@"; do
+    [[ -n "$pid" ]] || continue
+    cl="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    cl="$(printf '%s' "$cl" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    cl="$(_waitfor_abbrev "$cl")"
+    t="$pid (command not available yet)"
+    if [[ -n "$cl" ]]; then
+      t="$pid ($cl)"
+    fi
+    if [[ -n "$s" ]]; then
+      s="${s}; ${t}"
+    else
+      s=$t
+    fi
+  done
+  printf '%s' "$s"
+}
+
 # System tray / desktop bubble via Windows PowerShell (not pwsh on Linux).
 _waitfor_ps_toast() {
   local title=$1
@@ -429,9 +453,14 @@ main() {
     exit 1
   fi
 
+  # Snapshot for notifications (and stderr), before targets may exit.
+  local pids_pretty
+  pids_pretty="$(_waitfor_pids_pretty "${pids[@]}")"
+
   if [[ "$quiet" == 0 ]]; then
     err "Waiting mode: $mode"
     err "PIDs: ${pids[*]}"
+    err "Targets: $pids_pretty"
   fi
 
   local rc=0
@@ -447,7 +476,7 @@ main() {
         err "Timed out after ${timeout}s."
       fi
       if [[ "$notify" -eq 1 ]]; then
-        waitfor_notify "waitfor" "Timed out after ${timeout}s (PIDs: ${pids[*]})" "$quiet"
+        waitfor_notify "waitfor" "Timed out after ${timeout}s — $pids_pretty" "$quiet"
       fi
       exit 124
     fi
@@ -462,7 +491,7 @@ main() {
   fi
 
   if [[ "$notify" -eq 1 ]]; then
-    waitfor_notify "waitfor" "Finished waiting: ${pids[*]}" "$quiet"
+    waitfor_notify "waitfor" "Finished waiting: $pids_pretty" "$quiet"
   fi
 
   if [[ ${#cmd[@]} -eq 0 ]]; then
@@ -478,7 +507,9 @@ main() {
   rc=$?
   set -e
   if [[ "$notify" -eq 1 ]]; then
-    waitfor_notify "waitfor" "Command finished (exit $rc): $(_waitfor_abbrev "${cmd[*]}")" "$quiet"
+    local c0
+    c0="${cmd[0]##*/}"
+    waitfor_notify "waitfor" "Command \"$c0\" finished (exit $rc): $(_waitfor_abbrev "${cmd[*]}")" "$quiet"
   fi
   exit "$rc"
 }
