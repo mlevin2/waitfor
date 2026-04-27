@@ -4,8 +4,8 @@ Lightweight, best-effort shell completion support for standalone CLIs.
 
 Implements:
   --_complete-options
-  --print-completion fish|zsh
-  install-completion fish|zsh
+  --print-completion fish|zsh|bash
+  install-completion fish|zsh|bash
 """
 
 from __future__ import annotations
@@ -107,6 +107,26 @@ def _print_zsh(cmd_name: str) -> str:
     )
 
 
+def _print_bash(cmd_name: str) -> str:
+    # Portable with macOS /bin/bash 3.2: no `mapfile`; options from newline list → space-joined.
+    fn = _sanitize_ident(f"_{cmd_name}_complete")
+    return (
+        f"# bash completion for {cmd_name}\n"
+        f"{fn}() {{\n"
+        f"  local cur opts\n"
+        f"  if ! command -v {cmd_name} >/dev/null 2>&1; then\n"
+        f"    return\n"
+        f"  fi\n"
+        f"  cur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n"
+        f"  if [[ \"$cur\" = -* ]]; then\n"
+        f"    opts=\"$({cmd_name} --_complete-options 2>/dev/null | tr '\\n' ' ')\"\n"
+        f"    COMPREPLY=($(compgen -W \"$opts\" -- \"$cur\"))\n"
+        f"  fi\n"
+        f"}}\n"
+        f"complete -F {fn} {cmd_name}\n"
+    )
+
+
 def maybe_handle(argv0: str, argv: Sequence[str]) -> None:
     if len(argv) < 2:
         return
@@ -119,16 +139,28 @@ def maybe_handle(argv0: str, argv: Sequence[str]) -> None:
         raise SystemExit(0)
 
     if sub == "--print-completion":
-        if len(argv) < 3 or argv[2] not in ("fish", "zsh"):
-            print(f"Usage: {_cmd_name(argv0)} --print-completion {{fish|zsh}}", file=sys.stderr)
+        if len(argv) < 3 or argv[2] not in ("fish", "zsh", "bash"):
+            print(
+                f"Usage: {_cmd_name(argv0)} --print-completion {{fish|zsh|bash}}",
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         cmd = _cmd_name(argv0)
-        print(_print_fish(cmd) if argv[2] == "fish" else _print_zsh(cmd), end="")
+        if argv[2] == "fish":
+            out = _print_fish(cmd)
+        elif argv[2] == "zsh":
+            out = _print_zsh(cmd)
+        else:
+            out = _print_bash(cmd)
+        print(out, end="")
         raise SystemExit(0)
 
     if sub == "install-completion":
-        if len(argv) < 3 or argv[2] not in ("fish", "zsh"):
-            print(f"Usage: {_cmd_name(argv0)} install-completion {{fish|zsh}}", file=sys.stderr)
+        if len(argv) < 3 or argv[2] not in ("fish", "zsh", "bash"):
+            print(
+                f"Usage: {_cmd_name(argv0)} install-completion {{fish|zsh|bash}}",
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         cmd = _cmd_name(argv0)
         if argv[2] == "fish":
@@ -139,9 +171,18 @@ def maybe_handle(argv0: str, argv: Sequence[str]) -> None:
             print(str(out_file), file=sys.stderr)
             raise SystemExit(0)
 
-        out_dir = Path.home() / ".zsh" / "completions"
+        if argv[2] == "zsh":
+            out_dir = Path.home() / ".zsh" / "completions"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_file = out_dir / f"_{cmd}"
+            out_file.write_text(_print_zsh(cmd))
+            print(str(out_file), file=sys.stderr)
+            raise SystemExit(0)
+
+        # XDG user completions (bash-completion >= 1.2 / 2.x)
+        out_dir = Path.home() / ".local" / "share" / "bash-completion" / "completions"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / f"_{cmd}"
-        out_file.write_text(_print_zsh(cmd))
+        out_file = out_dir / cmd
+        out_file.write_text(_print_bash(cmd))
         print(str(out_file), file=sys.stderr)
         raise SystemExit(0)

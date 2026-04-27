@@ -19,14 +19,19 @@ ln -sf "$HOME/software/waitfor/waitfor" "$HOME/bin/waitfor"
 
 ## Shell completions
 
-`waitfor` supports **fish** and **zsh** completions (options are derived from `--help` via a small Python helper; same pattern as `pdf-extract-pages`).
+`waitfor` supports **fish**, **zsh**, and **bash** completions (options are derived from `--help` via a small Python helper; same pattern as `pdf-extract-pages`).
 
-- `waitfor --print-completion fish|zsh` — print a snippet to stdout
-- `waitfor install-completion fish|zsh` — write the completion file under `~/.config/fish/completions` or `~/.zsh/completions`
+- `waitfor --print-completion fish|zsh|bash` — print a snippet to stdout
+- `waitfor install-completion fish|zsh|bash` — write the completion file to:
+  - **fish:** `~/.config/fish/completions/waitfor.fish`
+  - **zsh:** `~/.zsh/completions/_waitfor`
+  - **bash:** `~/.local/share/bash-completion/completions/waitfor` (XDG user path used by [bash-completion](https://github.com/scop/bash-completion))
 
 Requires `python3` for these subcommands. Implementation: `tools/cli_completion.py` in this repo.
 
 **zsh:** add `fpath` before `compinit` if needed, e.g. `fpath=("$HOME/.zsh/completions" $fpath)`.
+
+**bash:** if completions are not picked up, ensure `bash_completion` is loaded (e.g. Homebrew: `source /opt/homebrew/etc/profile.d/bash_completion.sh` in `~/.bash_profile` / `~/.bashrc`), or add a one-liner to `source` files under `~/.local/share/bash-completion/completions/`.
 
 ## Finding a target PID (no TTY)
 
