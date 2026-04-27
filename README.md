@@ -39,6 +39,12 @@ waitfor "python myjob.py" -- rsync -av out/ /var/www/files/out/
 waitfor node postgres --any --settle 3 -- echo "something finished"
 ```
 
+## Notes / Caveats
+
+- Query matching is a plain substring match against `ps -ax ... command`. This is intentionally fuzzy and can behave differently across platforms and `ps` implementations.
+- If a query matches multiple processes, `waitfor` uses `fzf` to prompt you to pick one or more processes. In non-interactive contexts (stdin/stdout not a TTY), `waitfor` refuses to prompt and exits non-zero.
+- Some platforms can leave a short-lived zombie (`Z`) entry after a process exits. `waitfor` treats zombies as "done".
+
 ## Tests
 
 ```bash
