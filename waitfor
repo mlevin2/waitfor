@@ -22,16 +22,116 @@ Options:
   --settle SECONDS      Sleep this long after the wait completes (default: 0).
   --interval SECONDS    Poll interval in seconds (default: 2).
   -q, --quiet            Less output.
+  --notify               Best-effort desktop notification (after wait+settle,
+                        and when a post-wait command finishes, if any).
   -h, --help             Show this help.
 
 Examples:
   waitfor 12345 -- cp file1 /var/www/files/file1
   waitfor "python myjob.py" --any --settle 3 -- notify-send done
   waitfor node postgres
+  waitfor --notify 12345 -- rsync -a src/ dist/
 EOF
 }
 
 err() { printf '%s\n' "$*" >&2; }
+
+# Truncate a string for notification bodies.
+_waitfor_abbrev() {
+  local s=$1
+  local max=120
+  ((${#s} > max)) && printf '%s' "${s:0:max}..." || printf '%s' "$s"
+}
+
+# System tray / desktop bubble via Windows PowerShell (not pwsh on Linux).
+_waitfor_ps_toast() {
+  local title=$1
+  local body=$2
+  local p
+  p=$(command -v powershell.exe 2>/dev/null) || p=$(command -v powershell 2>/dev/null) || return 1
+  local ps1
+  if ! ps1=$(mktemp "${TMPDIR:-/tmp}/wftoast-XXXXXX.ps1"); then
+    return 1
+  fi
+  cat >"$ps1" <<'PST'
+param([string]$T,[string]$B)
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$ni = New-Object System.Windows.Forms.NotifyIcon
+$ni.Icon = [System.Drawing.SystemIcons]::Information
+$ni.Visible = $true
+$ni.ShowBalloonTip(12000, $T, $B, 'Info')
+Start-Sleep -Seconds 1
+$ni.Dispose()
+PST
+  if MSYS2_ARG_CONV_EXCL="*" "$p" -NoProfile -ExecutionPolicy Bypass -File "$ps1" -T "$title" -B "$body" 2>/dev/null; then
+    rm -f "$ps1"
+    return 0
+  fi
+  rm -f "$ps1"
+  return 1
+}
+
+# Try the Windows notifier only on Windows-like hosts or WSL (powershell.exe, not Linux pwsh).
+_waitfor_ps_toast_wsl() {
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  _waitfor_ps_toast "$1" "$2"
+}
+
+_waitfor_notify_try_builtin() {
+  local title=$1
+  local body=$2
+  local u
+  u=$(uname -s 2>/dev/null || true)
+
+  if [[ "$u" = "Darwin" ]] && command -v osascript >/dev/null 2>&1; then
+    if osascript \
+      -e 'on run argv' \
+      -e '  display notification (item 2 of argv) with title (item 1 of argv)' \
+      -e 'end run' \
+      -- "$title" "$body" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  if command -v notify-send >/dev/null 2>&1; then
+    if notify-send "$title" "$body" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  if [[ -n "${OS-}" && "$OS" = "Windows_NT" ]] || [[ "$u" = MINGW* || "$u" = MSYS* || "$u" = CYGWIN* ]]; then
+    if _waitfor_ps_toast "$title" "$body"; then
+      return 0
+    fi
+  fi
+
+  if [[ "$u" = "Linux" ]]; then
+    if _waitfor_ps_toast_wsl "$title" "$body"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# $1 title, $2 body, $3 1=disable "no backend" message (same as -q for notify warnings only)
+waitfor_notify() {
+  local title=$1
+  local body=$2
+  local quietish=${3:-0}
+
+  if [[ -n "${WAITFOR_NOTIFY_CMD:-}" ]]; then
+    "$WAITFOR_NOTIFY_CMD" "$title" "$body" 2>/dev/null || true
+    return 0
+  fi
+  if _waitfor_notify_try_builtin "$title" "$body"; then
+    return 0
+  fi
+  if [[ "$quietish" -eq 0 ]]; then
+    err "waitfor: --notify: no notifier; see README, or set WAITFOR_NOTIFY_CMD"
+  fi
+  return 0
+}
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -219,6 +319,7 @@ main() {
   local interval=2
   local timeout=0
   local quiet=0
+  local notify=0
 
   local -a targets=()
   local -a cmd=()
@@ -264,6 +365,10 @@ main() {
         ;;
       -q|--quiet)
         quiet=1
+        shift
+        ;;
+      --notify)
+        notify=1
         shift
         ;;
       -h|--help)
@@ -329,40 +434,53 @@ main() {
     err "PIDs: ${pids[*]}"
   fi
 
+  local rc=0
   if [[ "$mode" == "all" ]]; then
-    if wait_for_pids_all "$interval" "$timeout" "${pids[@]}"; then
-      :
-    else
-      rc=$?
-      if [[ "$rc" == "124" ]]; then
-        err "Timed out after ${timeout}s."
-        exit 124
-      fi
-      exit "$rc"
-    fi
+    wait_for_pids_all "$interval" "$timeout" "${pids[@]}" || rc=$?
   else
-    if wait_for_pids_any "$interval" "$timeout" "${pids[@]}"; then
-      :
-    else
-      rc=$?
-      if [[ "$rc" == "124" ]]; then
+    wait_for_pids_any "$interval" "$timeout" "${pids[@]}" || rc=$?
+  fi
+
+  if [[ "$rc" != "0" ]]; then
+    if [[ "$rc" == "124" ]]; then
+      if [[ "$quiet" == 0 ]]; then
         err "Timed out after ${timeout}s."
-        exit 124
       fi
-      exit "$rc"
+      if [[ "$notify" -eq 1 ]]; then
+        waitfor_notify "waitfor" "Timed out after ${timeout}s (PIDs: ${pids[*]})" "$quiet"
+      fi
+      exit 124
     fi
+    exit "$rc"
   fi
 
   if [[ "$settle" != "0" ]]; then
-    [[ "$quiet" == 1 ]] || err "Settling for ${settle}s..."
+    if [[ "$quiet" == 0 ]]; then
+      err "Settling for ${settle}s..."
+    fi
     sleep "$settle"
+  fi
+
+  if [[ "$notify" -eq 1 ]]; then
+    waitfor_notify "waitfor" "Finished waiting: ${pids[*]}" "$quiet"
   fi
 
   if [[ ${#cmd[@]} -eq 0 ]]; then
     exit 0
   fi
 
-  exec "${cmd[@]}"
+  if [[ "$notify" -eq 0 ]]; then
+    exec "${cmd[@]}"
+  fi
+
+  set +e
+  "${cmd[@]}"
+  rc=$?
+  set -e
+  if [[ "$notify" -eq 1 ]]; then
+    waitfor_notify "waitfor" "Command finished (exit $rc): $(_waitfor_abbrev "${cmd[*]}")" "$quiet"
+  fi
+  exit "$rc"
 }
 
 main "$@"

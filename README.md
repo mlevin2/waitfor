@@ -9,6 +9,7 @@ This is meant for the cross-terminal use case where `wait` can’t help because 
 - `ps`
 - [`ripgrep` (`rg`)](https://github.com/BurntSushi/ripgrep)
 - Optional: [`fzf`](https://github.com/junegunn/fzf) (used only when a query matches multiple processes)
+- **Desktop notifications (optional):** for `--notify`, a notifier is found automatically, or you can set `WAITFOR_NOTIFY_CMD` (it receives the title as `$1` and the body as `$2`).
 
 ## Install
 
@@ -56,6 +57,27 @@ Useful options:
 - `--timeout N|Nm|Nh|Nd` fail after a timeout (default: no timeout)
 - `--settle N` sleep N seconds after the wait completes
 - `--interval N` polling interval in seconds
+- `--notify` when supported, show a **desktop notification** after the wait and settle (and, if you pass a command, another when that command ends). This is best effort: the right notifier depends on the OS (see below). If nothing is available, `waitfor` prints a one-line warning unless you use `--quiet`—or set `WAITFOR_NOTIFY_CMD` to a script to handle notifications yourself.
+
+### Notifications and OS support
+
+`waitfor` does not add dependencies; it looks for a notifier in a fixed order.
+
+| OS / context | What we try (first match wins) |
+|----------------|--------------------------------|
+| **macOS** | `osascript` (`display notification`) |
+| **Linux (typical desktop)** | `notify-send` (e.g. libnotify) |
+| **Windows (Git Bash, MSYS, Cygwin)**, and **`OS=Windows_NT`** | A short `powershell` script using `System.Windows.Forms.NotifyIcon` (balloon tip) |
+| **WSL (Linux, `powershell.exe` available)** | The same Windows PowerShell path, so a toast on the Windows desktop |
+
+`WAITFOR_NOTIFY_CMD` overrides this entirely: the command is invoked with **two arguments** (title, body). Example:
+
+```bash
+export WAITFOR_NOTIFY_CMD="$HOME/bin/my-notify"
+# my-notify: printf or call notify-send, gntp, etc.
+```
+
+When `--notify` is set and a wait **times out**, a single timeout notification (or the same warning) is used; the **post-wait command is not run** (same as before).
 
 Examples:
 
