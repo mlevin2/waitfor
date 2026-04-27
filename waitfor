@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+waitfor: wait for one or more processes, then run a command
+
+Usage:
+  waitfor [options] <pid|query>... [-- <command> [args...]]
+
+Targets:
+  - If an argument is all digits, it is treated as a PID.
+  - Otherwise it is treated as a substring match against `ps` output.
+    If the match is unambiguous, that PID is used.
+    If ambiguous, fzf is used to select one or more processes.
+
+Options:
+  --all                 Wait for all targets (default).
+  --any                 Proceed when any one target exits.
+  --timeout DURATION    Max time to wait before failing (default: no timeout).
+                        Format: N, Ns, Nm, Nh, Nd (integers)
+  --settle SECONDS      Sleep this long after the wait completes (default: 0).
+  --interval SECONDS    Poll interval in seconds (default: 2).
+  -q, --quiet            Less output.
+  -h, --help             Show this help.
+
+Examples:
+  waitfor 12345 -- cp file1 /var/www/files/file1
+  waitfor "python myjob.py" --any --settle 3 -- notify-send done
+  waitfor node postgres
+EOF
+}
+
+err() { printf '%s\n' "$*" >&2; }
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    err "Missing required command on PATH: $1"
+    exit 1
+  }
+}
+
+parse_duration_seconds() {
+  # Accept: N, Ns, Nm, Nh, Nd (integers only)
+  # Examples: 600, 10m, 2h
+  local s=$1
+  if [[ "$s" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$s"
+    return 0
+  fi
+
+  if [[ "$s" =~ ^([0-9]+)([smhd])$ ]]; then
+    local n=${BASH_REMATCH[1]}
+    local u=${BASH_REMATCH[2]}
+    case "$u" in
+      s) printf '%s\n' "$n" ;;
+      m) printf '%s\n' $(( n * 60 )) ;;
+      h) printf '%s\n' $(( n * 3600 )) ;;
+      d) printf '%s\n' $(( n * 86400 )) ;;
+    esac
+    return 0
+  fi
+
+  err "Invalid duration: $s (expected N, Ns, Nm, Nh, or Nd)"
+  return 2
+}
+
+pid_exists() {
+  # `kill -0` can be ambiguous (EPERM). `ps -p` is simple and portable.
+  # Treat zombies as "done"; they have exited but haven't been reaped yet.
+  local stat
+  stat="$(ps -p "$1" -o stat= 2>/dev/null | tr -d ' ' || true)"
+  [[ -n "$stat" ]] || return 1
+  [[ "$stat" == *Z* ]] && return 1
+  return 0
+}
+
+is_pid() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+ps_list() {
+  # Keep formatting stable for both parsing and display.
+  # etime is useful context when picking in fzf.
+  ps -ax -o pid=,etime=,command=
+}
+
+resolve_query_to_pids() {
+  local query=$1
+  local psout
+  # Avoid the common footgun where the query string matches this wrapper itself.
+  psout="$(ps_list | awk -v self="$$" '$1 != self {print}')"
+
+  local matches
+  matches="$(printf '%s\n' "$psout" | rg --fixed-strings --ignore-case -- "$query" || true)"
+
+  # If the query is also present in other waitfor invocations, ignore those.
+  # (Common when you re-run the same wait in multiple terminals.)
+  matches="$(printf '%s\n' "$matches" | awk '$0 !~ /(^|[[:space:]])waitfor([[:space:]]|$)/ && $0 !~ /\/waitfor([[:space:]]|$)/' || true)"
+
+  if [[ -z "$matches" ]]; then
+    err "No processes matched query: $query"
+    return 1
+  fi
+
+  local count
+  count="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
+
+  if [[ "$count" == "1" ]]; then
+    printf '%s\n' "$matches" | awk '{print $1}'
+    return 0
+  fi
+
+  if ! command -v fzf >/dev/null 2>&1; then
+    err "Query matched multiple processes and fzf is not installed: $query"
+    err "Matches were:"
+    printf '%s\n' "$matches" >&2
+    return 1
+  fi
+
+  # In scripts/CI, fzf will block or fail; don't attempt an interactive prompt.
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    err "Query matched multiple processes (non-interactive); refusing to prompt: $query"
+    err "Matches were:"
+    printf '%s\n' "$matches" >&2
+    return 1
+  fi
+
+  local picked
+  picked="$(
+    printf '%s\n' "$matches" |
+      fzf --multi --ansi --prompt="waitfor ($query) > " --height=40% --border=rounded
+  )"
+
+  if [[ -z "$picked" ]]; then
+    err "No selection made for query: $query"
+    return 1
+  fi
+
+  printf '%s\n' "$picked" | awk '{print $1}'
+}
+
+wait_for_pids_all() {
+  local interval=$1; shift
+  local timeout=$1; shift
+  local pids=("$@")
+  local start=$SECONDS
+
+  while :; do
+    local alive=0
+    for pid in "${pids[@]}"; do
+      if pid_exists "$pid"; then
+        alive=1
+      fi
+    done
+    (( alive == 0 )) && return 0
+    if [[ "$timeout" != "0" ]] && (( (SECONDS - start) >= timeout )); then
+      return 124
+    fi
+    sleep "$interval"
+  done
+}
+
+wait_for_pids_any() {
+  local interval=$1; shift
+  local timeout=$1; shift
+  local pids=("$@")
+  local start=$SECONDS
+
+  while :; do
+    for pid in "${pids[@]}"; do
+      if ! pid_exists "$pid"; then
+        return 0
+      fi
+    done
+    if [[ "$timeout" != "0" ]] && (( (SECONDS - start) >= timeout )); then
+      return 124
+    fi
+    sleep "$interval"
+  done
+}
+
+main() {
+  need_cmd ps
+  need_cmd rg
+
+  local mode=all
+  local settle=0
+  local interval=2
+  local timeout=0
+  local quiet=0
+
+  local -a targets=()
+  local -a cmd=()
+  local saw_delim=0
+
+  while [[ $# -gt 0 ]]; do
+    if [[ "$saw_delim" == 1 ]]; then
+      cmd+=("$1")
+      shift
+      continue
+    fi
+
+    case "$1" in
+      --)
+        saw_delim=1
+        shift
+        ;;
+      --all)
+        mode=all
+        shift
+        ;;
+      --any|--first)
+        mode=any
+        shift
+        ;;
+      --timeout|-t)
+        shift
+        [[ $# -gt 0 ]] || { err "--timeout requires a value"; exit 2; }
+        timeout="$(parse_duration_seconds "$1")"
+        shift
+        ;;
+      --settle)
+        shift
+        [[ $# -gt 0 ]] || { err "--settle requires a value"; exit 2; }
+        settle="$1"
+        shift
+        ;;
+      --interval)
+        shift
+        [[ $# -gt 0 ]] || { err "--interval requires a value"; exit 2; }
+        interval="$1"
+        shift
+        ;;
+      -q|--quiet)
+        quiet=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --*)
+        err "Unknown option: $1"
+        err "Run: waitfor --help"
+        exit 2
+        ;;
+      *)
+        targets+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    usage
+    exit 2
+  fi
+
+  local -a pids=()
+  local t
+  for t in "${targets[@]}"; do
+    if is_pid "$t"; then
+      pids+=("$t")
+      continue
+    fi
+
+    local resolved
+    if ! resolved="$(resolve_query_to_pids "$t")"; then
+      exit 1
+    fi
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && pids+=("$pid")
+    done <<<"$resolved"
+  done
+
+  local -a uniq=()
+  local pid
+  for pid in "${pids[@]}"; do
+    local seen=0
+    local u
+    for u in "${uniq[@]}"; do
+      if [[ "$u" == "$pid" ]]; then
+        seen=1
+        break
+      fi
+    done
+    (( seen == 0 )) && uniq+=("$pid")
+  done
+  pids=("${uniq[@]}")
+
+  if [[ ${#pids[@]} -eq 0 ]]; then
+    err "No PIDs selected/resolved."
+    exit 1
+  fi
+
+  if [[ "$quiet" == 0 ]]; then
+    err "Waiting mode: $mode"
+    err "PIDs: ${pids[*]}"
+  fi
+
+  if [[ "$mode" == "all" ]]; then
+    if wait_for_pids_all "$interval" "$timeout" "${pids[@]}"; then
+      :
+    else
+      rc=$?
+      if [[ "$rc" == "124" ]]; then
+        err "Timed out after ${timeout}s."
+        exit 124
+      fi
+      exit "$rc"
+    fi
+  else
+    if wait_for_pids_any "$interval" "$timeout" "${pids[@]}"; then
+      :
+    else
+      rc=$?
+      if [[ "$rc" == "124" ]]; then
+        err "Timed out after ${timeout}s."
+        exit 124
+      fi
+      exit "$rc"
+    fi
+  fi
+
+  if [[ "$settle" != "0" ]]; then
+    [[ "$quiet" == 1 ]] || err "Settling for ${settle}s..."
+    sleep "$settle"
+  fi
+
+  if [[ ${#cmd[@]} -eq 0 ]]; then
+    exit 0
+  fi
+
+  exec "${cmd[@]}"
+}
+
+main "$@"
